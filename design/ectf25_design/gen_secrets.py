@@ -15,6 +15,9 @@ import json
 from pathlib import Path
 
 from loguru import logger
+import monocypher
+import numpy as np
+import time
 
 
 def gen_secrets(channels: list[int]) -> bytes:
@@ -35,6 +38,13 @@ def gen_secrets(channels: list[int]) -> bytes:
     # Create the secrets object
     # You can change this to generate any secret material
     # The secrets file will never be shared with attackers
+    k_sign, k_verify = monocypher.generate_signing_key_pair()
+    random = np.random.RandomState(seed=int(time.time))
+    k_subs = bytes(random.randint(0,256,32,dtype=np.uint8))
+    k_ch = []
+    for i in range(len(channels)):
+        k_ch[i] = bytes(random.randint(0,256,32,dtype=np.uint8))
+
     secrets = {
         "channels": channels,
         "some_secrets": "EXAMPLE",
