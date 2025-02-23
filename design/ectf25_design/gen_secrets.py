@@ -15,9 +15,9 @@ import json
 from pathlib import Path
 
 from loguru import logger
+
+import msgpack
 import monocypher
-import numpy as np
-import time
 
 
 def gen_secrets(channels: list[int]) -> bytes:
@@ -35,25 +35,38 @@ def gen_secrets(channels: list[int]) -> bytes:
     # TODO: Update this function to generate any system-wide secrets needed by
     #   your design
 
+    # Generate signing key pair (Ed25519)
+    signing_key, verification_key = monocypher.generate_signing_key_pair()
+
+
     # Create the secrets object
     # You can change this to generate any secret material
     # The secrets file will never be shared with attackers
-    k_sign, k_verify = monocypher.generate_signing_key_pair()
-    random = np.random.RandomState(seed=int(time.time))
-    k_subs = bytes(random.randint(0,256,32,dtype=np.uint8))
-    k_ch = []
-    for i in range(len(channels)):
-        k_ch[i] = bytes(random.randint(0,256,32,dtype=np.uint8))
-
     secrets = {
         "channels": channels,
-        "some_secrets": "EXAMPLE",
+        "signing_key": signing_key,
+        "verification_key": verification_key,
     }
+
+
+    # Subscription update key (ChaCha20, 32 bytes by default)
+    secrets["subscription_key"] = monocypher.generate_key()
+
+    # Channel 0 key, since it is always included (ChaCha20, 32 bytes by default)
+    secrets["channel_0_key"] = monocypher.generate_key()
+
+    # Generate other symmetric encryption channel keys (ChaCha20, 32 bytes by default)
+
+    for channel in channels:
+        secrets[f"channel_{channel}_key"] = monocypher.generate_key()
+
 
     # NOTE: if you choose to use JSON for your file type, you will not be able to
     # store binary data, and must either use a different file type or encode the
     # binary data to hex, base64, or another type of ASCII-only encoding
-    return json.dumps(secrets).encode()
+
+    # We are using msgpack (Available in both Python and C) to pack the secrets as a binary file
+    return msgpack.packb(secrets)
 
 
 def parse_args():
