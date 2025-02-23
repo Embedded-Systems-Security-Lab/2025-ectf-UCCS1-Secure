@@ -56,6 +56,8 @@
 
 // Calculate the flash address where we will store channel info as the 2nd to last page available
 #define FLASH_STATUS_ADDR ((MXC_FLASH_MEM_BASE + MXC_FLASH_MEM_SIZE) - (2 * MXC_FLASH_PAGE_SIZE))
+//need to add verification key, subscription key, and channel 0 key flash space
+//#define FLASH_STATUS_ADDR ((MXC_FLASH_MEM_BASE + MXC_FLASH_MEM_SIZE) - (2 * MXC_FLASH_PAGE_SIZE))
 
 //TODO: Add key storage?
 
@@ -79,6 +81,8 @@ typedef struct {
     channel_id_t channel;           //4
     uint8_t channel_key[CHANNEL_KEY_SIZE]; //32
 } subscription_update_packet_t; //56
+
+
 
 typedef struct {
     uint8_t encrypted_subscription_update[sizeof(subscription_update_packet_t)];
