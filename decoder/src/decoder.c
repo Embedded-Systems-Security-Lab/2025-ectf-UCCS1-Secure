@@ -45,7 +45,9 @@
 #define FRAME_SIZE 64
 #define DEFAULT_CHANNEL_TIMESTAMP 0xFFFFFFFFFFFFFFFF
 #define CHANNEL_KEY_SIZE 32
-#define ENC_SUB_SIZE 56
+#define MAC_SIZE 16
+#define NONCE_SIZE 24
+#define SIGNATURE_SIZE 64
 // This is a canary value so we can confirm whether this decoder has booted before
 #define FLASH_FIRST_BOOT 0xDEADBEEF
 
@@ -57,9 +59,8 @@
 // Calculate the flash address where we will store channel info as the 2nd to last page available
 #define FLASH_STATUS_ADDR ((MXC_FLASH_MEM_BASE + MXC_FLASH_MEM_SIZE) - (2 * MXC_FLASH_PAGE_SIZE))
 //need to add verification key, subscription key, and channel 0 key flash space
-//#define FLASH_STATUS_ADDR ((MXC_FLASH_MEM_BASE + MXC_FLASH_MEM_SIZE) - (2 * MXC_FLASH_PAGE_SIZE))
-
-//TODO: Add key storage?
+// not sure on this yet
+#define FLASH_KEYS_ADDR ((MXC_FLASH_MEM_BASE + MXC_FLASH_MEM_SIZE) - (1 * MXC_FLASH_PAGE_SIZE))
 
 /**********************************************************
  *********** COMMUNICATION PACKET DEFINITIONS *************
@@ -75,6 +76,19 @@ typedef struct {
 } frame_packet_t;
 
 typedef struct {
+    uint8_t encrypted_frame[sizeof(frame_packet_t)];
+    uint8_t mac[MAC_SIZE];
+    uint8_t nonce[NONCE_SIZE];
+} encrypted_frame_packet_t;
+
+typedef struct {
+    channel_id_t channel;
+    timestamp_t timestamp;
+    uint8_t signed_frame[sizeof(encrypted_frame_packet_t)];
+    uint8_t signature[SIGNATURE_SIZE];
+} signed_frame_packet_t;
+
+typedef struct {
     decoder_id_t decoder_id;        //4
     timestamp_t start_timestamp;    //8
     timestamp_t end_timestamp;      //8
@@ -82,17 +96,15 @@ typedef struct {
     uint8_t channel_key[CHANNEL_KEY_SIZE]; //32
 } subscription_update_packet_t; //56
 
-
-
 typedef struct {
     uint8_t encrypted_subscription_update[sizeof(subscription_update_packet_t)];
-    uint8_t mac[16];
-    uint8_t nonce[24];
+    uint8_t mac[MAC_SIZE];
+    uint8_t nonce[NONCE_SIZE];
 } encrypted_subscription_update_package_t;
 
 typedef struct {
     uint8_t signed_subscription_update[sizeof(encrypted_subscription_update_package_t)];
-    uint8_t signature[64];
+    uint8_t signature[SIGNATURE_SIZE];
 } signed_subscription_update_package_t;
 
 typedef struct {
@@ -114,7 +126,7 @@ typedef struct {
  **********************************************************/
 
 typedef struct {
-    //bool active;
+    bool active;
     channel_id_t id;
     timestamp_t start_timestamp;
     timestamp_t end_timestamp;
@@ -132,54 +144,35 @@ typedef struct {
 
 // This is used to track decoder subscriptions
 flash_entry_t decoder_status;
-
+uint8_t verify_key[32];
+uint8_t subscription_key[32];
+uint8_t channel_0_key[32];
 
 /**********************************************************
  ******************* UTILITY FUNCTIONS ********************
  **********************************************************/
-/** @brief check wheather device time falls within subscrtiption start and end time
- *
- *  @param channel individual channel info stored in decoder_status
- *  @return 1 if active 0 if not
-*/  
-
- int isActiveSubscription(channel_info_t* channel){
-    //implementation will depend on how we handle timestamps
- }
 
 /** @brief Checks whether the decoder is subscribed to a given channel
+ *  Called by decoder() to check if there is a valid,active subscription for the given frame
  *
  *  @param channel The channel number to be checked.
  *  @return 1 if the the decoder is subscribed to the channel.  0 if not.
 */
-int is_subscribed(channel_id_t channel) {
+int is_subscribed(channel_id_t channel, timestamp_t framestamp) {
     // Check if this is an emergency broadcast message
     if (channel == EMERGENCY_CHANNEL) {
         return 1;
     }
     // Check if the decoder has has a subscription
     for (int i = 0; i < MAX_CHANNEL_COUNT; i++) {
-        if (decoder_status.subscribed_channels[i].id == channel && isActiveSubscription(decoder_status.subscribed_channels[i])) {
+        if (decoder_status.subscribed_channels[i].id == channel && 
+            decoder_status.subscribed_channels[i].active &&
+            decoder_status.subscribed_channels[i].start_timestamp <= framestamp &&
+            decoder_status.subscribed_channels[i].end_timestamp   >= framestamp) {
             return 1;
         }
     }
     return 0;
-}
-
-/** @brief Prints the boot reference design flag
- *
- *  TODO: Remove this in your final design
-*/
-void boot_flag(void) {
-    char flag[28];
-    char output_buf[128] = {0};
-
-    for (int i = 0; aseiFuengleR[i]; i++) {
-        flag[i] = deobfuscate(aseiFuengleR[i], djFIehjkklIH[i]);
-        flag[i+1] = 0;
-    }
-    sprintf(output_buf, "Boot Reference Flag: %s\n", flag);
-    print_debug(output_buf);
 }
 
 
@@ -199,7 +192,7 @@ int list_channels() {
     resp.n_channels = 0;
 
     for (uint32_t i = 0; i < MAX_CHANNEL_COUNT; i++) {
-        if (isActiveSubscription(&decoder_status.subscribed_channels[i])) {
+        if (decoder_status.subscribed_channels[i].active) {
             resp.channel_info[resp.n_channels].channel =  decoder_status.subscribed_channels[i].id;
             resp.channel_info[resp.n_channels].start = decoder_status.subscribed_channels[i].start_timestamp;
             resp.channel_info[resp.n_channels].end = decoder_status.subscribed_channels[i].end_timestamp;
@@ -226,28 +219,41 @@ int list_channels() {
  *
  *  @return 0 upon success.  -1 if error.
 */
-int update_subscription(pkt_len_t pkt_len, signed_subscription_update_packet_t *signed_update) {
+int update_subscription(pkt_len_t pkt_len, signed_subscription_update_packet_t *update) {
     int i;
-    subscription_update_packet_t update;
-    encrypted_subscription_update_package_t enc_update;
+    subscription_update_packet_t dec_update;
+    encrypted_subscription_update_package_t* enc_update;
 
-    if (crypto_eddsa_check(signed_update->signature, pk, 
-        signed_update->signed_subscription_Update, 
-        sizeof(encrypted_subscription_update_package_t))) {
+    if (crypto_eddsa_check(
+        update->signature,  //signature
+        verify_key,         //key
+        update->signed_subscription_update, //signed data
+        sizeof(encrypted_subscription_update_package_t) // size of signed data
+    )) {
         /* Message is corrupted, do not trust it */
+        STATUS_LED_RED();
+        print_error("Failed to update subscription - signature could not be authenticated\n");
+        return -1;
     } else {
         /* Message is genuine */
+        enc_update = &(update->signed_subscription_update);
     }
     
-    if (crypto_aead_unlock(&update, enc_update->mac,
-        key, enc_update->mac,
-        NULL, 0,
-        enc_update->encrypted_subscription_update, 
+    if (crypto_aead_unlock(
+        &dec_update, //plaintext buffer
+        enc_update->mac, //mac
+        subscription_key, //key
+        enc_update->nonce, //nonce
+        NULL, 0, //additional(non encrypted) data, and size
+        enc_update->encrypted_subscription_update, //cyphertext
         sizeof(subscription_update_packet_t))) {
         /* The message is corrupted.
         * Wipe key if it is no longer needed,
         * and abort the decryption.
         */
+        STATUS_LED_RED();
+        print_error("Failed to update subscription - decryption failed\n");
+        return -1;
         //crypto_wipe(key, 32);
     } else {
         /* ...do something with the decrypted text here... */
@@ -256,7 +262,7 @@ int update_subscription(pkt_len_t pkt_len, signed_subscription_update_packet_t *
         //crypto_wipe(key, 32);
     }
 
-    if (update.channel == EMERGENCY_CHANNEL) {
+    if (dec_update.channel == EMERGENCY_CHANNEL) {
         STATUS_LED_RED();
         print_error("Failed to update subscription - cannot subscribe to emergency channel\n");
         return -1;
@@ -264,11 +270,12 @@ int update_subscription(pkt_len_t pkt_len, signed_subscription_update_packet_t *
 
     // Find the first empty slot in the subscription array
     for (i = 0; i < MAX_CHANNEL_COUNT; i++) {
-        if (decoder_status.subscribed_channels[i].id == update.channel || !isActiveSubscription(&decoder_status.subscribed_channels[i])) {
-            decoder_status.subscribed_channels[i].id = update.channel;
-            decoder_status.subscribed_channels[i].start_timestamp = update.start_timestamp;
-            decoder_status.subscribed_channels[i].end_timestamp = update.end_timestamp;
-            decoder_status.subscribed_channels[i].channel_key = update.channel_key
+        if (decoder_status.subscribed_channels[i].id == dec_update.channel || !decoder_status.subscribed_channels[i].active) {
+            decoder_status.subscribed_channels[i].active = true;
+            decoder_status.subscribed_channels[i].id = dec_update.channel;
+            decoder_status.subscribed_channels[i].start_timestamp = dec_update.start_timestamp;
+            decoder_status.subscribed_channels[i].end_timestamp = dec_update.end_timestamp;
+            decoder_status.subscribed_channels[i].channel_key = dec_update.channel_key
             break;
         }
     }
@@ -294,25 +301,64 @@ int update_subscription(pkt_len_t pkt_len, signed_subscription_update_packet_t *
  *
  *  @return 0 if successful.  -1 if data is from unsubscribed channel.
 */
-int decode(pkt_len_t pkt_len, frame_packet_t *new_frame) {
+int decode(pkt_len_t pkt_len, signed_frame_packet_t *new_frame) {
     char output_buf[128] = {0};
     uint16_t frame_size;
     channel_id_t channel;
 
     // Frame size is the size of the packet minus the size of non-frame elements
-    frame_size = pkt_len - (sizeof(new_frame->channel) + sizeof(new_frame->timestamp));
+    //frame_size = pkt_len - (sizeof(new_frame->channel) + sizeof(new_frame->timestamp));
     channel = new_frame->channel;
 
     // The reference design doesn't use the timestamp, but you may want to in your design
-    // timestamp_t timestamp = new_frame->timestamp;
+    timestamp_t timestamp = new_frame->timestamp;
 
     // Check that we are subscribed to the channel...
     print_debug("Checking subscription\n");
-    if (is_subscribed(channel)) {
+    if (is_subscribed(channel,timestamp)) {
         print_debug("Subscription Valid\n");
-        /* The reference design doesn't need any extra work to decode, but your design likely will.
-        *  Do any extra decoding here before returning the result to the host. */
-        write_packet(DECODE_MSG, new_frame->data, frame_size);
+
+        frame_packet_t frame;
+        encrypted_frame_packet_t *enc_frame;
+   
+        if (crypto_eddsa_check(
+            new_frame->signature, 
+            verify_key, 
+            new_frame->signed_frame, 
+            sizeof(encrypted_frame_packet_t)
+        )) {
+            /* Message is corrupted, do not trust it */
+            STATUS_LED_RED();
+            print_error("Failed to decode frame - signature could not be authenticated\n");
+            return -1;
+        } else {
+            /* Message is genuine */
+            enc_frame = &(new_frame->signed_frame);
+        }
+       
+        if (crypto_aead_unlock(
+            &frame, 
+            enc_frame->mac,
+            decoder_status.subscribed_channels[channel].channel_key, 
+            enc_frame->nonce,
+            NULL, 0,
+            enc_update->encrypted_subscription_update, 
+            sizeof(frame_packet_t))) {
+            /* The message is corrupted.
+            * Wipe key if it is no longer needed,
+            * and abort the decryption.
+            */
+            STATUS_LED_RED();
+            print_error("Failed to decode frame - decryption failed\n");
+            return -1;
+            //crypto_wipe(key, 32);
+        } else {
+            /* ...do something with the decrypted text here... */
+            /* Finally, wipe secrets if they are no longer needed */
+            //crypto_wipe(plain_text, 12);
+            //crypto_wipe(key, 32);
+        }
+        write_packet(DECODE_MSG, frame->data, FRAME_SIZE);
         return 0;
     } else {
         STATUS_LED_RED();
