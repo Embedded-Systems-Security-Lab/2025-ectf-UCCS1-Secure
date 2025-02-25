@@ -52,12 +52,13 @@ class Encoder:
         # TODO: encode the satellite frames so that they meet functional and
         #  security requirements
 
-        nonce = secrets.token_bytes()
+        nonce = secrets.token_bytes(24)
         to_encrypt = struct.pack("<IQ", channel, timestamp) + frame
         mac, cyphertext = monocypher.lock(self.secrets[f"channel_{channel}_key"],nonce,to_encrypt)
-        signature = monocypher.signature_sign(self.secrets["signing_key"])
+        to_sign = cyphertext + mac + nonce
+        signature = monocypher.signature_sign(self.secrets["signing_key"],to_sign )
 
-        return struct.pack("<IQ", channel, timestamp)+ cyphertext + mac + signature
+        return struct.pack("<IQ", channel, timestamp) + cyphertext + mac + nonce + signature
 
 
 def main():

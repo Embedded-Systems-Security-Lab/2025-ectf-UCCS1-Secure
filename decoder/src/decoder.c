@@ -45,7 +45,6 @@
 #define EMERGENCY_CHANNEL 0
 #define FRAME_SIZE 64
 #define DEFAULT_CHANNEL_TIMESTAMP 0xFFFFFFFFFFFFFFFF
-#define CHANNEL_KEY_SIZE 32
 #define MAC_SIZE 16
 #define NONCE_SIZE 24
 #define SIGNATURE_SIZE 64
@@ -220,6 +219,9 @@ int update_subscription(pkt_len_t pkt_len, signed_subscription_update_packet_t *
     subscription_update_packet_t dec_update;
     encrypted_subscription_update_packet_t *enc_update;
 
+
+    print_hex_debug(update->signed_subscription_update, sizeof(encrypted_subscription_update_packet_t));
+    print_hex_debug(update->signature, SIGNATURE_SIZE);
     if (crypto_eddsa_check(
         update->signature,  //signature
         verification_key,         //key
@@ -271,7 +273,7 @@ int update_subscription(pkt_len_t pkt_len, signed_subscription_update_packet_t *
             decoder_status.subscribed_channels[i].id = dec_update.channel;
             decoder_status.subscribed_channels[i].start_timestamp = dec_update.start_timestamp;
             decoder_status.subscribed_channels[i].end_timestamp = dec_update.end_timestamp;
-            decoder_status.subscribed_channels[i].channel_key = dec_update.channel_key
+            memcpy(decoder_status.subscribed_channels[i].channel_key, dec_update.channel_key, CHANNEL_KEY_SIZE);
             break;
         }
     }
@@ -299,7 +301,7 @@ int update_subscription(pkt_len_t pkt_len, signed_subscription_update_packet_t *
 */
 int decode(pkt_len_t pkt_len, signed_frame_packet_t *new_frame) {
     char output_buf[128] = {0};
-    uint16_t frame_size;
+    //uint16_t frame_size;
     channel_id_t channel;
 
     // Frame size is the size of the packet minus the size of non-frame elements
@@ -316,7 +318,6 @@ int decode(pkt_len_t pkt_len, signed_frame_packet_t *new_frame) {
 
         frame_packet_t frame;
         encrypted_frame_packet_t *enc_frame;
-   
         if (crypto_eddsa_check(
             new_frame->signature, 
             verification_key, 
@@ -329,19 +330,19 @@ int decode(pkt_len_t pkt_len, signed_frame_packet_t *new_frame) {
             return -1;
         } else {
             /* Message is genuine */
-            enc_frame = &(new_frame->signed_frame);
+            enc_frame = (encrypted_frame_packet_t*)(new_frame->signed_frame);
         }
-        uint32_t channel_key[CHANNEL_KEY_SIZE];
+        const uint8_t* channel_key;
         if(channel == EMERGENCY_CHANNEL) channel_key = emergency_channel_key;
         else channel_key = decoder_status.subscribed_channels[channel].channel_key;
         
         if (crypto_aead_unlock(
-            &frame, 
+            (uint8_t*)&frame, 
             enc_frame->mac,
-            decoder_status.subscribed_channels[channel].channel_key, 
+            channel_key, 
             enc_frame->nonce,
             NULL, 0,
-            enc_update->encrypted_subscription_update, 
+            enc_frame->encrypted_frame, 
             sizeof(frame_packet_t))) {
             /* The message is corrupted.
             * Wipe key if it is no longer needed,
@@ -357,7 +358,17 @@ int decode(pkt_len_t pkt_len, signed_frame_packet_t *new_frame) {
             //crypto_wipe(plain_text, 12);
             //crypto_wipe(key, 32);
         }
-        write_packet(DECODE_MSG, frame->data, FRAME_SIZE);
+        if(frame.timestamp != timestamp){
+            STATUS_LED_RED();
+            print_error("Encrypted Timestamp does not match plaintext Timestamp\n");
+            return -1;
+        }
+        if(frame.channel != channel){
+            STATUS_LED_RED();
+            print_error("Encrypted channel number does not match plaintext channel\n");
+            return -1;
+        }
+        write_packet(DECODE_MSG, frame.data, FRAME_SIZE);
         return 0;
     } else {
         STATUS_LED_RED();

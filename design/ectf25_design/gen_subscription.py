@@ -14,9 +14,10 @@ import argparse
 import json
 from pathlib import Path
 import struct
+import secrets as sec
 import msgpack
 import monocypher
-import secrets
+
 
 from loguru import logger
 
@@ -42,15 +43,17 @@ def gen_subscription(
     subscription_key = secrets_data["subscription_key"]
     channel_key = secrets_data[f"channel_{channel}_key"]
     sign_key = secrets_data["signing_key"]
-    nonce = secrets.token_bytes()
+    nonce = sec.token_bytes(24)
 
-    sub = struct.pack("<IQQII", device_id, start, end, channel,channel_key)
+    sub = struct.pack("<IQQI", device_id, start, end, channel) + channel_key
 
     mac, cyphertext = monocypher.lock(subscription_key, nonce, sub)
 
     encrypted_sub = cyphertext+mac+nonce
     signature = monocypher.signature_sign(sign_key,encrypted_sub)
-
+    print(len(encrypted_sub+signature))
+    print(f"Encrypted sub: {encrypted_sub.hex()}")
+    print(f"signature: {signature.hex()}")
     # Pack the subscription. This will be sent to the decoder with ectf25.tv.subscribe
     return encrypted_sub + signature
 

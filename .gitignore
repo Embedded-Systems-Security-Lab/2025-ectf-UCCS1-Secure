@@ -340,3 +340,4 @@ msdk/
 
 
 /decoder/inc/decoder_secrets.h
+*.sub

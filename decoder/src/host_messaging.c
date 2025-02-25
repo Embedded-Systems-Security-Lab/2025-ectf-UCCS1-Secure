@@ -191,7 +191,7 @@ int read_packet(msg_type_t* cmd, void *buf, uint16_t *len) {
     if (len != NULL) {
         *len = header.len;
     }
-    buf = malloc(len)
+    buf = malloc(len);
 
     if (header.cmd != ACK_MSG) {
         write_ack();  // ACK the header
