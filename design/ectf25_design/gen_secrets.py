@@ -72,9 +72,9 @@ def gen_secrets(channels: list[int]) -> bytes:
         f.write(f"#define VERIF_KEY_SIZE {len(secrets['verification_key'])}\n")
         f.write(f"#define CHANNEL_KEY_SIZE {len(secrets['channel_0_key'])}\n\n")
         
-        f.write(f"static const uint8_t subscription_key[SUB_KEY_SIZE] = {secrets['subscription_key']}; // subscription update key\n")
-        f.write(f"static const uint8_t verification_key[VERIF_KEY_SIZE] = {secrets['verification_key']}; // verification key\n")
-        f.write(f"static const uint8_t emergency_channel_key[CHANNEL_KEY_SIZE] = {secrets['channel_0_key']}; // emergency channel key\n")
+        f.write(f"static const uint8_t subscription_key[SUB_KEY_SIZE] = {{ {', '.join(f'0x{b:02X}' for b in secrets['subscription_key'])} }}; // subscription update key\n")
+        f.write(f"static const uint8_t verification_key[VERIF_KEY_SIZE] = {{ {', '.join(f'0x{b:02X}' for b in secrets['verification_key'])} }}; // verification key\n")
+        f.write(f"static const uint8_t emergency_channel_key[CHANNEL_KEY_SIZE] = {{ {', '.join(f'0x{b:02X}' for b in secrets['channel_0_key'])} }}; // emergency channel key\n")
 
         f.write("\n#endif // SECRETS_H\n")
 
