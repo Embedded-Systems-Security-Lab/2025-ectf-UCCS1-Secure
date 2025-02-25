@@ -22,10 +22,11 @@
 #include "simple_flash.h"
 #include "host_messaging.h"
 
+
 #include "simple_uart.h"
 
-#include "mono_crypto.h"
-
+#include "monocypher.h"
+#include "decoder_secrets.h"
 
 /**********************************************************
  ******************* PRIMITIVE TYPES **********************
@@ -58,9 +59,6 @@
 
 // Calculate the flash address where we will store channel info as the 2nd to last page available
 #define FLASH_STATUS_ADDR ((MXC_FLASH_MEM_BASE + MXC_FLASH_MEM_SIZE) - (2 * MXC_FLASH_PAGE_SIZE))
-//need to add verification key, subscription key, and channel 0 key flash space
-// not sure on this yet
-#define FLASH_KEYS_ADDR ((MXC_FLASH_MEM_BASE + MXC_FLASH_MEM_SIZE) - (1 * MXC_FLASH_PAGE_SIZE))
 
 /**********************************************************
  *********** COMMUNICATION PACKET DEFINITIONS *************
@@ -100,12 +98,12 @@ typedef struct {
     uint8_t encrypted_subscription_update[sizeof(subscription_update_packet_t)];
     uint8_t mac[MAC_SIZE];
     uint8_t nonce[NONCE_SIZE];
-} encrypted_subscription_update_package_t;
+} encrypted_subscription_update_packet_t;
 
 typedef struct {
-    uint8_t signed_subscription_update[sizeof(encrypted_subscription_update_package_t)];
+    uint8_t signed_subscription_update[sizeof(encrypted_subscription_update_packet_t)];
     uint8_t signature[SIGNATURE_SIZE];
-} signed_subscription_update_package_t;
+} signed_subscription_update_packet_t;
 
 typedef struct {
     channel_id_t channel;
@@ -130,7 +128,7 @@ typedef struct {
     channel_id_t id;
     timestamp_t start_timestamp;
     timestamp_t end_timestamp;
-    uint8_t channel_key;
+    uint8_t channel_key[CHANNEL_KEY_SIZE];
 } channel_status_t;
 
 typedef struct {
@@ -144,9 +142,7 @@ typedef struct {
 
 // This is used to track decoder subscriptions
 flash_entry_t decoder_status;
-uint8_t verify_key[32];
-uint8_t subscription_key[32];
-uint8_t channel_0_key[32];
+
 
 /**********************************************************
  ******************* UTILITY FUNCTIONS ********************
@@ -222,13 +218,13 @@ int list_channels() {
 int update_subscription(pkt_len_t pkt_len, signed_subscription_update_packet_t *update) {
     int i;
     subscription_update_packet_t dec_update;
-    encrypted_subscription_update_package_t* enc_update;
+    encrypted_subscription_update_packet_t *enc_update;
 
     if (crypto_eddsa_check(
         update->signature,  //signature
-        verify_key,         //key
+        verification_key,         //key
         update->signed_subscription_update, //signed data
-        sizeof(encrypted_subscription_update_package_t) // size of signed data
+        sizeof(encrypted_subscription_update_packet_t) // size of signed data
     )) {
         /* Message is corrupted, do not trust it */
         STATUS_LED_RED();
@@ -236,11 +232,11 @@ int update_subscription(pkt_len_t pkt_len, signed_subscription_update_packet_t *
         return -1;
     } else {
         /* Message is genuine */
-        enc_update = &(update->signed_subscription_update);
+        enc_update = (encrypted_subscription_update_packet_t *)(update->signed_subscription_update);
     }
     
     if (crypto_aead_unlock(
-        &dec_update, //plaintext buffer
+        (uint8_t*)&dec_update, //plaintext buffer
         enc_update->mac, //mac
         subscription_key, //key
         enc_update->nonce, //nonce
@@ -323,7 +319,7 @@ int decode(pkt_len_t pkt_len, signed_frame_packet_t *new_frame) {
    
         if (crypto_eddsa_check(
             new_frame->signature, 
-            verify_key, 
+            verification_key, 
             new_frame->signed_frame, 
             sizeof(encrypted_frame_packet_t)
         )) {
@@ -335,7 +331,10 @@ int decode(pkt_len_t pkt_len, signed_frame_packet_t *new_frame) {
             /* Message is genuine */
             enc_frame = &(new_frame->signed_frame);
         }
-       
+        uint32_t channel_key[CHANNEL_KEY_SIZE];
+        if(channel == EMERGENCY_CHANNEL) channel_key = emergency_channel_key;
+        else channel_key = decoder_status.subscribed_channels[channel].channel_key;
+        
         if (crypto_aead_unlock(
             &frame, 
             enc_frame->mac,
@@ -420,7 +419,7 @@ void init() {
 
 int main(void) {
     char output_buf[128] = {0};
-    uint8_t uart_buf[100]; // Does this need to be bigger, should it be dynamically allocated?
+    uint8_t *uart_buf; // Does this need to be bigger, should it be dynamically allocated?
     msg_type_t cmd;
     int result;
     uint16_t pkt_len;
@@ -450,23 +449,19 @@ int main(void) {
         // Handle list command
         case LIST_MSG:
             STATUS_LED_CYAN();
-
-            // Print the boot flag
-            // TODO: Remove this from your design
-            boot_flag();
             list_channels();
             break;
 
         // Handle decode command
         case DECODE_MSG:
             STATUS_LED_PURPLE();
-            decode(pkt_len, (frame_packet_t *)uart_buf);
+            decode(pkt_len, (signed_frame_packet_t *)uart_buf);
             break;
 
         // Handle subscribe command
         case SUBSCRIBE_MSG:
             STATUS_LED_YELLOW();
-            update_subscription(pkt_len, (signed_subscription_update_package_t *)uart_buf);
+            update_subscription(pkt_len, (signed_subscription_update_packet_t *)uart_buf);
             break;
 
         // Handle bad command

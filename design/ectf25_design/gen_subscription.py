@@ -14,6 +14,9 @@ import argparse
 import json
 from pathlib import Path
 import struct
+import msgpack
+import monocypher
+import secrets
 
 from loguru import logger
 
@@ -35,15 +38,21 @@ def gen_subscription(
     #   subscribe to a new channel
 
     # Load the json of the secrets file
-    secrets = json.loads(secrets)
+    secrets_data = msgpack.unpackb(secrets)
+    subscription_key = secrets_data["subscription_key"]
+    channel_key = secrets_data[f"channel_{channel}_key"]
+    sign_key = secrets_data["signing_key"]
+    nonce = secrets.token_bytes()
 
-    # You can use secrets generated using `gen_secrets` here like:
-    # secrets["some_secrets"]
-    # Which would return "EXAMPLE" in the reference design.
-    # Please note that the secrets are READ ONLY at this sage!
+    sub = struct.pack("<IQQII", device_id, start, end, channel,channel_key)
+
+    mac, cyphertext = monocypher.lock(subscription_key, nonce, sub)
+
+    encrypted_sub = cyphertext+mac+nonce
+    signature = monocypher.signature_sign(sign_key,encrypted_sub)
 
     # Pack the subscription. This will be sent to the decoder with ectf25.tv.subscribe
-    return struct.pack("<IQQI", device_id, start, end, channel)
+    return encrypted_sub + signature
 
 
 def parse_args():
