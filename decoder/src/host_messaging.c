@@ -12,9 +12,9 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 
 #include "host_messaging.h"
-#include <stdlib.h>
 
 
 /** @brief Read len bytes from UART, acknowledging after every 256 bytes.
@@ -176,7 +176,7 @@ int write_packet(msg_type_t type, const void *buf, uint16_t len) {
  * 
  *  @return 0 on success, a negative number on failure
 */
-int read_packet(msg_type_t* cmd, void *buf, uint16_t *len) {
+int read_packet(msg_type_t* cmd, void **buf, uint16_t *len) {
     msg_header_t header = {0};
 
     // cmd must be a valid pointer
@@ -191,12 +191,16 @@ int read_packet(msg_type_t* cmd, void *buf, uint16_t *len) {
     if (len != NULL) {
         *len = header.len;
     }
-    buf = malloc(len);
+    *buf = malloc(header.len);
+    if (*buf == NULL) {
+        return -1; // Memory allocation failed
+    }
 
     if (header.cmd != ACK_MSG) {
         write_ack();  // ACK the header
-        if (header.len && buf != NULL) {
-            if (read_bytes(buf, header.len) < 0) {
+        if (header.len && *buf != NULL) {
+            if (read_bytes(*buf, header.len) < 0) {
+                free(*buf);
                 return -1;
             }
         }

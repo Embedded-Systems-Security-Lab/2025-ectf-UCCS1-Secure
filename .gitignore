@@ -341,3 +341,4 @@ msdk/
 
 /decoder/inc/decoder_secrets.h
 *.sub
+/deadbeef_build/

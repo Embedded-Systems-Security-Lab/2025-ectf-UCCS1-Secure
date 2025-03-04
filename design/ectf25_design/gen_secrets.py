@@ -14,11 +14,13 @@ import argparse
 import json
 import os
 from pathlib import Path
+import base64
 
 from loguru import logger
 
-import msgpack
 import monocypher
+
+
 
 
 def gen_secrets(channels: list[int]) -> bytes:
@@ -38,28 +40,27 @@ def gen_secrets(channels: list[int]) -> bytes:
 
     # Generate signing key pair (Ed25519)
     signing_key, verification_key = monocypher.generate_signing_key_pair()
-
+    #print(f"Signing Key: {signing_key.hex()}")
+    #print(f"Verification Key: {verification_key.hex()}")
 
     # Create the secrets object
     # You can change this to generate any secret material
     # The secrets file will never be shared with attackers
     secrets = {
         "channels": channels,
-        "signing_key": signing_key,
-        "verification_key": verification_key,
+        "signing_key": base64.b64encode(signing_key).decode('utf-8'),
+        "verification_key": base64.b64encode(verification_key).decode('utf-8'),
     }
 
-
     # Subscription update key (ChaCha20, 32 bytes by default)
-    secrets["subscription_key"] = monocypher.generate_key()
+    secrets["subscription_key"] = base64.b64encode(monocypher.generate_key()).decode('utf-8')
 
     # Channel 0 key, since it is always included (ChaCha20, 32 bytes by default)
-    secrets["channel_0_key"] = monocypher.generate_key()
+    secrets["channel_0_key"] = base64.b64encode(monocypher.generate_key()).decode('utf-8')
 
     # Generate other symmetric encryption channel keys (ChaCha20, 32 bytes by default)
-
     for channel in channels:
-        secrets[f"channel_{channel}_key"] = monocypher.generate_key()
+        secrets[f"channel_{channel}_key"] = base64.b64encode(monocypher.generate_key()).decode('utf-8')
 
     # Write the secrets to a header file (for decoder)
     file_name = "decoder_secrets.h"
@@ -68,13 +69,13 @@ def gen_secrets(channels: list[int]) -> bytes:
     with open(os.path.join(device_dir, file_name), "w") as f:
         f.write("#pragma once\n#ifndef SECRETS_H\n#define SECRETS_H\n\n")
 
-        f.write(f"#define SUB_KEY_SIZE {len(secrets['subscription_key'])}\n")
-        f.write(f"#define VERIF_KEY_SIZE {len(secrets['verification_key'])}\n")
-        f.write(f"#define CHANNEL_KEY_SIZE {len(secrets['channel_0_key'])}\n\n")
+        f.write(f"#define SUB_KEY_SIZE {len(base64.b64decode(secrets['subscription_key']))}\n")
+        f.write(f"#define VERIF_KEY_SIZE {len(base64.b64decode(secrets['verification_key']))}\n")
+        f.write(f"#define CHANNEL_KEY_SIZE {len(base64.b64decode(secrets['channel_0_key']))}\n\n")
         
-        f.write(f"static const uint8_t subscription_key[SUB_KEY_SIZE] = {{ {', '.join(f'0x{b:02X}' for b in secrets['subscription_key'])} }}; // subscription update key\n")
-        f.write(f"static const uint8_t verification_key[VERIF_KEY_SIZE] = {{ {', '.join(f'0x{b:02X}' for b in secrets['verification_key'])} }}; // verification key\n")
-        f.write(f"static const uint8_t emergency_channel_key[CHANNEL_KEY_SIZE] = {{ {', '.join(f'0x{b:02X}' for b in secrets['channel_0_key'])} }}; // emergency channel key\n")
+        f.write(f"static const uint8_t subscription_key[SUB_KEY_SIZE] = {{ {', '.join(f'0x{b:02X}' for b in base64.b64decode(secrets['subscription_key']))} }}; // subscription update key\n")
+        f.write(f"static const uint8_t verification_key[VERIF_KEY_SIZE] = {{ {', '.join(f'0x{b:02X}' for b in base64.b64decode(secrets['verification_key']))} }}; // verification key\n")
+        f.write(f"static const uint8_t emergency_channel_key[CHANNEL_KEY_SIZE] = {{ {', '.join(f'0x{b:02X}' for b in base64.b64decode(secrets['channel_0_key']))} }}; // emergency channel key\n")
 
         f.write("\n#endif // SECRETS_H\n")
 
@@ -84,7 +85,7 @@ def gen_secrets(channels: list[int]) -> bytes:
     # binary data to hex, base64, or another type of ASCII-only encoding
 
     # We are using msgpack (Available in both Python and C) to pack the secrets as a binary file
-    return msgpack.packb(secrets)
+    return json.dumps(secrets).encode() #msgpack.packb(secrets)
 
 
 def parse_args():

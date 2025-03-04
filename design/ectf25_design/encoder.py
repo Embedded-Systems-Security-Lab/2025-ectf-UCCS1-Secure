@@ -15,6 +15,7 @@ import struct
 import json
 import secrets
 import monocypher
+import base64
 
 class Encoder:
     def __init__(self, secrets: bytes):
@@ -28,7 +29,7 @@ class Encoder:
         #   improve the throughput of Encoder.encode
 
         # Load the json of the secrets file
-        self.secrets = msgpack.unpackb(secrets)
+        self.secrets = json.loads(secrets)
 
 
     def encode(self, channel: int, frame: bytes, timestamp: int) -> bytes:
@@ -54,9 +55,9 @@ class Encoder:
 
         nonce = secrets.token_bytes(24)
         to_encrypt = struct.pack("<IQ", channel, timestamp) + frame
-        mac, cyphertext = monocypher.lock(self.secrets[f"channel_{channel}_key"],nonce,to_encrypt)
+        mac, cyphertext = monocypher.lock(bytes(base64.b64decode(self.secrets[f"channel_{channel}_key"])),nonce,to_encrypt)
         to_sign = cyphertext + mac + nonce
-        signature = monocypher.signature_sign(self.secrets["signing_key"],to_sign )
+        signature = monocypher.signature_sign(bytes(base64.b64decode(self.secrets["signing_key"])),to_sign )
 
         return struct.pack("<IQ", channel, timestamp) + cyphertext + mac + nonce + signature
 

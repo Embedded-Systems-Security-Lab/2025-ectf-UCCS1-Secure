@@ -15,6 +15,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
+#include <stdlib.h>
 #include "mxc_device.h"
 #include "status_led.h"
 #include "board.h"
@@ -195,7 +196,7 @@ int list_channels() {
         }
     }
 
-    len = sizeof(resp.n_channels) + (sizeof(channel_info_t) * resp.n_channels);
+    len = sizeof(resp.n_channels) + ((sizeof(channel_info_t)-SUB_KEY_SIZE) * resp.n_channels);
 
     // Success message
     write_packet(LIST_MSG, &resp, len);
@@ -220,8 +221,8 @@ int update_subscription(pkt_len_t pkt_len, signed_subscription_update_packet_t *
     encrypted_subscription_update_packet_t *enc_update;
 
 
-    print_hex_debug(update->signed_subscription_update, sizeof(encrypted_subscription_update_packet_t));
-    print_hex_debug(update->signature, SIGNATURE_SIZE);
+    //print_hex_debug(update->signed_subscription_update, sizeof(encrypted_subscription_update_packet_t));
+    //print_hex_debug(update->signature, SIGNATURE_SIZE);
     if (crypto_eddsa_check(
         update->signature,  //signature
         verification_key,         //key
@@ -332,10 +333,23 @@ int decode(pkt_len_t pkt_len, signed_frame_packet_t *new_frame) {
             /* Message is genuine */
             enc_frame = (encrypted_frame_packet_t*)(new_frame->signed_frame);
         }
-        const uint8_t* channel_key;
-        if(channel == EMERGENCY_CHANNEL) channel_key = emergency_channel_key;
-        else channel_key = decoder_status.subscribed_channels[channel].channel_key;
-        
+        const uint8_t* channel_key = NULL;
+        if (channel == EMERGENCY_CHANNEL) {
+            channel_key = emergency_channel_key;
+        } else {
+            for (int i = 0; i < MAX_CHANNEL_COUNT; i++) {
+                if (decoder_status.subscribed_channels[i].id == channel && 
+                    decoder_status.subscribed_channels[i].active) {
+                    channel_key = decoder_status.subscribed_channels[i].channel_key;
+                    break;
+                }
+            }
+        }
+        if (channel_key == NULL) {
+            STATUS_LED_RED();
+            print_error("Failed to decode frame - channel key not found\n");
+            return -1;
+        }
         if (crypto_aead_unlock(
             (uint8_t*)&frame, 
             enc_frame->mac,
@@ -430,7 +444,7 @@ void init() {
 
 int main(void) {
     char output_buf[128] = {0};
-    uint8_t *uart_buf; // Does this need to be bigger, should it be dynamically allocated?
+    uint8_t *uart_buf = NULL; // Does this need to be bigger, should it be dynamically allocated?
     msg_type_t cmd;
     int result;
     uint16_t pkt_len;
@@ -446,7 +460,7 @@ int main(void) {
 
         STATUS_LED_GREEN();
 
-        result = read_packet(&cmd, uart_buf, &pkt_len);
+        result = read_packet(&cmd, (void**)&uart_buf, &pkt_len);
 
         if (result < 0) {
             STATUS_LED_ERROR();
