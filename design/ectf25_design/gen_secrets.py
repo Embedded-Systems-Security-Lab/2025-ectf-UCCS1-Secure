@@ -64,7 +64,7 @@ def gen_secrets(channels: list[int]) -> bytes:
 
     # Write the secrets to a header file (for decoder)
     file_name = "decoder_secrets.h"
-    device_dir = "decoder/inc/"
+    device_dir = "/decoder/inc/"
 
     with open(os.path.join(device_dir, file_name), "w") as f:
         f.write("#pragma once\n#ifndef SECRETS_H\n#define SECRETS_H\n\n")
