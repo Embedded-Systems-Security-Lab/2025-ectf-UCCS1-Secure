@@ -40,3 +40,10 @@ CRYPTO_EXAMPLE=0
 
 # Enable Crypto Example
 #CRYPTO_EXAMPLE=1
+
+#inc/decoder_secrets.h: Makefile
+#	@echo "Generating decoder_secrets.h from global.secrets..."
+#	$(shell python3 makeSecretsHeader.py)
+
+# Add the custom rule as a dependency to the build process
+#release: inc/decoder_secrets.h

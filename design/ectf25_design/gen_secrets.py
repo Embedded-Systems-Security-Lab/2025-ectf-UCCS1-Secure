@@ -63,7 +63,7 @@ def gen_secrets(channels: list[int]) -> bytes:
         secrets[f"channel_{channel}_key"] = base64.b64encode(monocypher.generate_key()).decode('utf-8')
 
     # Write the secrets to a header file (for decoder)
-    file_name = "decoder_secrets.h"
+    '''file_name = "decoder_secrets.h"
     device_dir = "decoder/inc/"
 
     with open(os.path.join(device_dir, file_name), "w") as f:
@@ -77,7 +77,7 @@ def gen_secrets(channels: list[int]) -> bytes:
         f.write(f"static const uint8_t verification_key[VERIF_KEY_SIZE] = {{ {', '.join(f'0x{b:02X}' for b in base64.b64decode(secrets['verification_key']))} }}; // verification key\n")
         f.write(f"static const uint8_t emergency_channel_key[CHANNEL_KEY_SIZE] = {{ {', '.join(f'0x{b:02X}' for b in base64.b64decode(secrets['channel_0_key']))} }}; // emergency channel key\n")
 
-        f.write("\n#endif // SECRETS_H\n")
+        f.write("\n#endif // SECRETS_H\n")'''
 
 
     # NOTE: if you choose to use JSON for your file type, you will not be able to

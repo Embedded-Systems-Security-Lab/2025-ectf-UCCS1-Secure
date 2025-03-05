@@ -35,8 +35,8 @@ ENV MAXIM_PATH=/root/msdk-2024_02
 
 WORKDIR /decoder
 
-ENTRYPOINT ["bash", "-c", "make release DECODER_ID=${DECODER_ID} && cp build/max78000.elf build/max78000.bin /out"]
-#clear secrets
-#RUN rm /inc/secrets.h
+ENTRYPOINT ["bash", "-c", "python makeSecretsHeader.py && make release DECODER_ID=${DECODER_ID} && cp build/max78000.elf build/max78000.bin /out"]
+
 # Sample run command:
-# docker run --rm -v ./build_out:/out -v ./:/decoder -v ./secrets:/secrets -e DECODER_ID=0xdeadbeef decoder
+# docker run -v ./decoder/:/decoder -v ./global.secrets:/global.secrets:ro -v ./deadbeef_build:/out -e DECODER_ID=0xdeadbeef build-decoder
+
