@@ -109,7 +109,6 @@ typedef struct {
     channel_id_t channel;
     timestamp_t start;
     timestamp_t end;
-    uint8_t channel_key[CHANNEL_KEY_SIZE];
 } channel_info_t;
 
 typedef struct {
@@ -196,7 +195,7 @@ int list_channels() {
         }
     }
 
-    len = sizeof(resp.n_channels) + ((sizeof(channel_info_t)-SUB_KEY_SIZE) * resp.n_channels);
+    len = sizeof(resp.n_channels) + ((sizeof(channel_info_t)) * resp.n_channels);
 
     // Success message
     write_packet(LIST_MSG, &resp, len);
