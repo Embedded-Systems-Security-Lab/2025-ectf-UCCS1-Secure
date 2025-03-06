@@ -14,6 +14,10 @@ import argparse
 import json
 from pathlib import Path
 import struct
+import secrets as sec
+import base64
+import monocypher
+
 
 from loguru import logger
 
@@ -35,15 +39,56 @@ def gen_subscription(
     #   subscribe to a new channel
 
     # Load the json of the secrets file
-    secrets = json.loads(secrets)
+    secrets_data = json.loads(secrets) #msgpack.unpackb(secrets)
+    subscription_key = bytes(base64.b64decode(secrets_data["subscription_key"]))
+    channel_key = bytes(base64.b64decode(secrets_data[f"channel_{channel}_key"]))
+    sign_key = bytes(base64.b64decode(secrets_data["signing_key"]))
+    #print(f"Verification Key: {verify_key.hex()}")
+    #print(f"Sign key: {sign_key.hex()}")
+    nonce = sec.token_bytes(24)
 
-    # You can use secrets generated using `gen_secrets` here like:
-    # secrets["some_secrets"]
-    # Which would return "EXAMPLE" in the reference design.
-    # Please note that the secrets are READ ONLY at this sage!
+    sub = struct.pack("<IQQI", device_id, start, end, channel) + channel_key
+    #print(f"Sub: {sub.hex()}")
 
+    mac, cyphertext = monocypher.lock(subscription_key, nonce, sub)
+
+    encrypted_sub = cyphertext+mac+nonce
+    signature = monocypher.signature_sign(sign_key,encrypted_sub)
+
+    #print(len(encrypted_sub+signature))
+    #print(f"Encrypted sub: {encrypted_sub.hex()}")
+    #print(f"signature: {signature.hex()}")
+    test_subscription_verify_and_decrypt(secrets_data,encrypted_sub + signature, sub)
     # Pack the subscription. This will be sent to the decoder with ectf25.tv.subscribe
-    return struct.pack("<IQQI", device_id, start, end, channel)
+    return encrypted_sub + signature
+
+def test_subscription_verify_and_decrypt(secrets_data: bytes, msg: bytes, plaintext:bytes) -> bool:
+    #secrets_data = msgpack.unpackb(secrets)
+    subscription_key = bytes(base64.b64decode(secrets_data["subscription_key"]))
+    verify_key = bytes(base64.b64decode(secrets_data["verification_key"]))
+
+    signature = msg[-64:]
+    #print(f"signature: {signature.hex()}")
+    encrypted_sub = msg[:-64]
+    nonce = encrypted_sub[-24:]
+    mac = encrypted_sub[-40:-24]
+    cyphertext = encrypted_sub[:-40]
+
+    # Verify the signature
+    if not monocypher.signature_check(signature,verify_key, encrypted_sub):
+        print("Signature verification failed")
+        return False
+
+    # Decrypt the message
+    try:
+        sub = monocypher.unlock(subscription_key, nonce, mac,cyphertext)
+        #print(f"Decrypted sub: {sub.hex()}")
+        assert(sub == plaintext)
+        return True
+    except Exception as e:
+        print(f"Decryption failed: {e}")
+        return False
+
 
 
 def parse_args():
@@ -86,6 +131,7 @@ def main():
     subscription = gen_subscription(
         args.secrets_file.read(), args.device_id, args.start, args.end, args.channel
     )
+
 
     # Print the generated subscription for your own debugging
     # Attackers will NOT have access to the output of this (although they may have

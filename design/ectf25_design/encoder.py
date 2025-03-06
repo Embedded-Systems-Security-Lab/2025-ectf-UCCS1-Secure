@@ -13,7 +13,9 @@ Copyright: Copyright (c) 2025 The MITRE Corporation
 import argparse
 import struct
 import json
-
+import secrets
+import monocypher
+import base64
 
 class Encoder:
     def __init__(self, secrets: bytes):
@@ -27,11 +29,8 @@ class Encoder:
         #   improve the throughput of Encoder.encode
 
         # Load the json of the secrets file
-        secrets = json.loads(secrets)
+        self.secrets = json.loads(secrets)
 
-        # Load the example secrets for use in Encoder.encode
-        # This will be "EXAMPLE" in the reference design"
-        self.some_secrets = secrets["some_secrets"]
 
     def encode(self, channel: int, frame: bytes, timestamp: int) -> bytes:
         """The frame encoder function
@@ -54,7 +53,13 @@ class Encoder:
         # TODO: encode the satellite frames so that they meet functional and
         #  security requirements
 
-        return struct.pack("<IQ", channel, timestamp) + frame
+        nonce = secrets.token_bytes(24)
+        to_encrypt = struct.pack("<IQ", channel, timestamp) + frame
+        mac, cyphertext = monocypher.lock(bytes(base64.b64decode(self.secrets[f"channel_{channel}_key"])),nonce,to_encrypt)
+        to_sign = cyphertext + mac + nonce
+        signature = monocypher.signature_sign(bytes(base64.b64decode(self.secrets["signing_key"])),to_sign )
+
+        return struct.pack("<IQ", channel, timestamp) + cyphertext + mac + nonce + signature
 
 
 def main():

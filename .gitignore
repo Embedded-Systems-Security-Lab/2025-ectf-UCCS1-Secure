@@ -337,3 +337,8 @@ wolfssl/
 msdk/
 *.secrets
 *.subscription
+
+
+/decoder/inc/decoder_secrets.h
+*.sub
+/deadbeef_build/
