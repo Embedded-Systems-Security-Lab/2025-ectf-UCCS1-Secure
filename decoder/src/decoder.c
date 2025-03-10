@@ -68,23 +68,23 @@
 // for more information on what struct padding does, see:
 // https://www.gnu.org/software/c-intro-and-ref/manual/html_node/Structure-Layout.html
 typedef struct {
-    channel_id_t channel;
-    timestamp_t timestamp;
-    uint8_t data[FRAME_SIZE];
-} frame_packet_t;
+    channel_id_t channel; //4
+    timestamp_t timestamp; //8
+    uint8_t data[FRAME_SIZE]; //64
+} frame_packet_t; //76
 
 typedef struct {
     uint8_t encrypted_frame[sizeof(frame_packet_t)];
-    uint8_t mac[MAC_SIZE];
-    uint8_t nonce[NONCE_SIZE];
-} encrypted_frame_packet_t;
+    uint8_t mac[MAC_SIZE]; //16
+    uint8_t nonce[NONCE_SIZE]; //24
+} encrypted_frame_packet_t; //116
 
 typedef struct {
-    channel_id_t channel;
-    timestamp_t timestamp;
-    uint8_t signed_frame[sizeof(encrypted_frame_packet_t)];
-    uint8_t signature[SIGNATURE_SIZE];
-} signed_frame_packet_t;
+    channel_id_t channel; //4
+    timestamp_t timestamp; //8
+    uint8_t signed_frame[sizeof(encrypted_frame_packet_t)]; //116
+    uint8_t signature[SIGNATURE_SIZE]; //64
+} signed_frame_packet_t; //192
 
 typedef struct {
     decoder_id_t decoder_id;        //4
@@ -96,13 +96,13 @@ typedef struct {
 
 typedef struct {
     uint8_t encrypted_subscription_update[sizeof(subscription_update_packet_t)];
-    uint8_t mac[MAC_SIZE];
-    uint8_t nonce[NONCE_SIZE];
+    uint8_t mac[MAC_SIZE]; //16
+    uint8_t nonce[NONCE_SIZE]; //24
 } encrypted_subscription_update_packet_t;
 
 typedef struct {
     uint8_t signed_subscription_update[sizeof(encrypted_subscription_update_packet_t)];
-    uint8_t signature[SIGNATURE_SIZE];
+    uint8_t signature[SIGNATURE_SIZE]; //64
 } signed_subscription_update_packet_t;
 
 typedef struct {
@@ -443,7 +443,7 @@ void init() {
 
 int main(void) {
     char output_buf[128] = {0};
-    uint8_t *uart_buf = NULL; // Does this need to be bigger, should it be dynamically allocated?
+    uint8_t uart_buf[192]; // Does this need to be bigger, should it be dynamically allocated?
     msg_type_t cmd;
     int result;
     uint16_t pkt_len;
@@ -459,7 +459,7 @@ int main(void) {
 
         STATUS_LED_GREEN();
 
-        result = read_packet(&cmd, (void**)&uart_buf, &pkt_len);
+        result = read_packet(&cmd, uart_buf, &pkt_len);
 
         if (result < 0) {
             STATUS_LED_ERROR();
