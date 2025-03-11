@@ -98,12 +98,12 @@ typedef struct {
     uint8_t encrypted_subscription_update[sizeof(subscription_update_packet_t)];
     uint8_t mac[MAC_SIZE]; //16
     uint8_t nonce[NONCE_SIZE]; //24
-} encrypted_subscription_update_packet_t;
+} encrypted_subscription_update_packet_t; //96
 
 typedef struct {
     uint8_t signed_subscription_update[sizeof(encrypted_subscription_update_packet_t)];
     uint8_t signature[SIGNATURE_SIZE]; //64
-} signed_subscription_update_packet_t;
+} signed_subscription_update_packet_t; //160
 
 typedef struct {
     channel_id_t channel;
@@ -153,9 +153,10 @@ flash_entry_t decoder_status;
  *  @param channel The channel number to be checked.
  *  @return 1 if the the decoder is subscribed to the channel.  0 if not.
 */
-int is_subscribed(channel_id_t channel, timestamp_t framestamp) {
+int is_subscribed(channel_id_t channel, timestamp_t framestamp, const uint8_t **channel_key) {
     // Check if this is an emergency broadcast message
     if (channel == EMERGENCY_CHANNEL) {
+        *channel_key = emergency_channel_key;
         return 1;
     }
     // Check if the decoder has has a subscription
@@ -164,6 +165,7 @@ int is_subscribed(channel_id_t channel, timestamp_t framestamp) {
             decoder_status.subscribed_channels[i].active &&
             decoder_status.subscribed_channels[i].start_timestamp <= framestamp &&
             decoder_status.subscribed_channels[i].end_timestamp   >= framestamp) {
+            *channel_key = decoder_status.subscribed_channels[i].channel_key;
             return 1;
         }
     }
@@ -310,10 +312,10 @@ int decode(pkt_len_t pkt_len, signed_frame_packet_t *new_frame) {
 
     // The reference design doesn't use the timestamp, but you may want to in your design
     timestamp_t timestamp = new_frame->timestamp;
-
+    const uint8_t* channel_key = NULL;
     // Check that we are subscribed to the channel...
     print_debug("Checking subscription\n");
-    if (is_subscribed(channel,timestamp)) {
+    if (is_subscribed(channel,timestamp, &channel_key)) {
         print_debug("Subscription Valid\n");
 
         frame_packet_t frame;
@@ -332,18 +334,7 @@ int decode(pkt_len_t pkt_len, signed_frame_packet_t *new_frame) {
             /* Message is genuine */
             enc_frame = (encrypted_frame_packet_t*)(new_frame->signed_frame);
         }
-        const uint8_t* channel_key = NULL;
-        if (channel == EMERGENCY_CHANNEL) {
-            channel_key = emergency_channel_key;
-        } else {
-            for (int i = 0; i < MAX_CHANNEL_COUNT; i++) {
-                if (decoder_status.subscribed_channels[i].id == channel && 
-                    decoder_status.subscribed_channels[i].active) {
-                    channel_key = decoder_status.subscribed_channels[i].channel_key;
-                    break;
-                }
-            }
-        }
+
         if (channel_key == NULL) {
             STATUS_LED_RED();
             print_error("Failed to decode frame - channel key not found\n");
@@ -385,10 +376,10 @@ int decode(pkt_len_t pkt_len, signed_frame_packet_t *new_frame) {
         return 0;
     } else {
         STATUS_LED_RED();
-        sprintf(
+        /*sprintf(
             output_buf,
-            "Receiving unsubscribed channel data.  %u\n", channel);
-        print_error(output_buf);
+            "Receiving unsubscribed channel data.  %u\n", channel); */
+        print_error("Receiving unsubscribed channel data\n");
         return -1;
     }
 }
