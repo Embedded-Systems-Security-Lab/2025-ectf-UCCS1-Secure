@@ -17,7 +17,7 @@ import struct
 import secrets as sec
 import base64
 import monocypher
-
+import time
 
 from loguru import logger
 
@@ -46,7 +46,9 @@ def gen_subscription(
     #print(f"Verification Key: {verify_key.hex()}")
     #print(f"Sign key: {sign_key.hex()}")
     nonce = sec.token_bytes(24)
-
+    if start == 0 and end == 0:
+        start = time.time_ns() // 1000
+        end = start + 10000000000
     sub = struct.pack("<IQQI", device_id, start, end, channel) + channel_key
     #print(f"Sub: {sub.hex()}")
 

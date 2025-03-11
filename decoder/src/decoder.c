@@ -164,25 +164,9 @@ int is_subscribed(channel_id_t channel, timestamp_t framestamp, const uint8_t **
         if (decoder_status.subscribed_channels[i].id == channel && 
             decoder_status.subscribed_channels[i].active &&
             decoder_status.subscribed_channels[i].start_timestamp <= framestamp &&
-            decoder_status.subscribed_channels[i].end_timestamp   >= framestamp) {
+            decoder_status.subscribed_channels[i].end_timestamp   >= framestamp
+            ) {
             *channel_key = decoder_status.subscribed_channels[i].channel_key;
-            return 1;
-        }
-    }
-    return 0;
-}
-
-int is_subscribed(channel_id_t channel, timestamp_t framestamp) {
-    // Check if this is an emergency broadcast message
-    if (channel == EMERGENCY_CHANNEL) {
-        return 1;
-    }
-    // Check if the decoder has has a subscription
-    for (int i = 0; i < MAX_CHANNEL_COUNT; i++) {
-        if (decoder_status.subscribed_channels[i].id == channel && 
-            decoder_status.subscribed_channels[i].active &&
-            decoder_status.subscribed_channels[i].start_timestamp <= framestamp &&
-            decoder_status.subscribed_channels[i].end_timestamp   >= framestamp) {
             return 1;
         }
     }
@@ -357,15 +341,15 @@ int decode(pkt_len_t pkt_len, signed_frame_packet_t *new_frame) {
     const uint8_t* channel_key = NULL;
     // Check that we are subscribed to the channel...
     print_debug("Checking subscription\n");
-    if (is_subscribed(channel,timestamp, &channel_key)) {
+    if ( is_subscribed(channel,timestamp, &channel_key)) {
         print_debug("Subscription Valid\n");
 
         if (!is_timestamp_valid(channel, timestamp)) {
             STATUS_LED_RED();
             print_error("Failed to decode frame - invalid timestamp sequence\n");
             return -1;
-
-        frame_packet_t frame;
+        }
+        frame_packet_t* frame;
         encrypted_frame_packet_t *enc_frame;
         if (crypto_eddsa_check(
             new_frame->signature, 
@@ -373,22 +357,20 @@ int decode(pkt_len_t pkt_len, signed_frame_packet_t *new_frame) {
             new_frame->signed_frame, 
             sizeof(encrypted_frame_packet_t)
         )) {
-            /* Message is corrupted, do not trust it */
             STATUS_LED_RED();
             print_error("Failed to decode frame - signature could not be authenticated\n");
             return -1;
         } else {
-            /* Message is genuine */
             enc_frame = (encrypted_frame_packet_t*)(new_frame->signed_frame);
-        }
-
+        } 
+        //enc_frame = (encrypted_frame_packet_t*)(new_frame->signed_frame);
         if (channel_key == NULL) {
             STATUS_LED_RED();
             print_error("Failed to decode frame - channel key not found\n");
             return -1;
         }
         if (crypto_aead_unlock(
-            (uint8_t*)&frame, 
+            enc_frame->encrypted_frame, 
             enc_frame->mac,
             channel_key, 
             enc_frame->nonce,
@@ -408,25 +390,26 @@ int decode(pkt_len_t pkt_len, signed_frame_packet_t *new_frame) {
             /* Finally, wipe secrets if they are no longer needed */
             //crypto_wipe(plain_text, 12);
             //crypto_wipe(key, 32);
+            frame = ((frame_packet_t*)(enc_frame->encrypted_frame));
         }
-        if(frame.timestamp != timestamp){
+        if(frame->timestamp != timestamp){
             STATUS_LED_RED();
             print_error("Encrypted Timestamp does not match plaintext Timestamp\n");
             return -1;
         }
-        if(frame.channel != channel){
+        if(frame->channel != channel){
             STATUS_LED_RED();
             print_error("Encrypted channel number does not match plaintext channel\n");
             return -1;
         }
-        write_packet(DECODE_MSG, frame.data, FRAME_SIZE);
+        write_packet(DECODE_MSG, frame->data, FRAME_SIZE);
         return 0;
     } else {
         STATUS_LED_RED();
-        /*sprintf(
+        sprintf(
             output_buf,
-            "Receiving unsubscribed channel data.  %u\n", channel); */
-        print_error("Receiving unsubscribed channel data\n");
+            "Receiving unsubscribed channel data.  %u\n", channel);
+        print_error(output_buf);
         return -1;
     }
 }
