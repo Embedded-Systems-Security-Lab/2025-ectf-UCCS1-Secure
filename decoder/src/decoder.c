@@ -172,6 +172,48 @@ int is_subscribed(channel_id_t channel, timestamp_t framestamp, const uint8_t **
     return 0;
 }
 
+int is_subscribed(channel_id_t channel, timestamp_t framestamp) {
+    // Check if this is an emergency broadcast message
+    if (channel == EMERGENCY_CHANNEL) {
+        return 1;
+    }
+    // Check if the decoder has has a subscription
+    for (int i = 0; i < MAX_CHANNEL_COUNT; i++) {
+        if (decoder_status.subscribed_channels[i].id == channel && 
+            decoder_status.subscribed_channels[i].active &&
+            decoder_status.subscribed_channels[i].start_timestamp <= framestamp &&
+            decoder_status.subscribed_channels[i].end_timestamp   >= framestamp) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+int is_timestamp_valid(channel_id_t channel, timestamp_t timestamp) {
+    static timestamp_t last_timestamps[MAX_CHANNEL_COUNT + 1] = {0}; // +1 for emergency channel
+    
+    // Get the index for this channel in our tracking array
+    int index = (channel == EMERGENCY_CHANNEL) ? MAX_CHANNEL_COUNT : 0;
+    for (int i = 0; i < MAX_CHANNEL_COUNT; i++) {
+        if (decoder_status.subscribed_channels[i].id == channel && 
+            decoder_status.subscribed_channels[i].active) {
+            index = i;
+            break;
+        }
+    }
+    
+    // Check if timestamp is greater than the last seen timestamp for this channel
+    if (timestamp <= last_timestamps[index] && last_timestamps[index] != 0) {
+        // This could be a replay attack
+        STATUS_LED_RED();
+        print_error("Potential replay attack detected - timestamp not increasing\n");
+        return 0;
+    }
+    
+    // Update the last seen timestamp for this channel
+    last_timestamps[index] = timestamp;
+    return 1;
+}
 
 
 /**********************************************************
@@ -317,6 +359,11 @@ int decode(pkt_len_t pkt_len, signed_frame_packet_t *new_frame) {
     print_debug("Checking subscription\n");
     if (is_subscribed(channel,timestamp, &channel_key)) {
         print_debug("Subscription Valid\n");
+
+        if (!is_timestamp_valid(channel, timestamp)) {
+            STATUS_LED_RED();
+            print_error("Failed to decode frame - invalid timestamp sequence\n");
+            return -1;
 
         frame_packet_t frame;
         encrypted_frame_packet_t *enc_frame;
