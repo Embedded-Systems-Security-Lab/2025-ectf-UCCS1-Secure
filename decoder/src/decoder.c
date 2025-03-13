@@ -351,7 +351,7 @@ int decode(pkt_len_t pkt_len, signed_frame_packet_t *new_frame) {
         }
         frame_packet_t* frame;
         encrypted_frame_packet_t *enc_frame;
-        if (crypto_eddsa_check(
+/*         if (crypto_eddsa_check(
             new_frame->signature, 
             verification_key, 
             new_frame->signed_frame, 
@@ -362,8 +362,8 @@ int decode(pkt_len_t pkt_len, signed_frame_packet_t *new_frame) {
             return -1;
         } else {
             enc_frame = (encrypted_frame_packet_t*)(new_frame->signed_frame);
-        } 
-        //enc_frame = (encrypted_frame_packet_t*)(new_frame->signed_frame);
+        }  */
+        enc_frame = (encrypted_frame_packet_t*)(new_frame->signed_frame);
         if (channel_key == NULL) {
             STATUS_LED_RED();
             print_error("Failed to decode frame - channel key not found\n");
