@@ -56,10 +56,10 @@ class Encoder:
         nonce = secrets.token_bytes(24)
         to_encrypt = struct.pack("<IQ", channel, timestamp) + frame
         mac, cyphertext = monocypher.lock(bytes(base64.b64decode(self.secrets[f"channel_{channel}_key"])),nonce,to_encrypt)
-        to_sign = cyphertext + mac + nonce
-        signature = monocypher.signature_sign(bytes(base64.b64decode(self.secrets["signing_key"])),to_sign )
+        #to_sign = cyphertext + mac + nonce
+        #signature = monocypher.signature_sign(bytes(base64.b64decode(self.secrets["signing_key"])),to_sign )
 
-        return struct.pack("<IQ", channel, timestamp) + cyphertext + mac + nonce + signature
+        return struct.pack("<IQ", channel, timestamp) + cyphertext + mac + nonce #+ signature
 
 
 def main():

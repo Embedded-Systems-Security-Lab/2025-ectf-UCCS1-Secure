@@ -52,6 +52,10 @@
 // This is a canary value so we can confirm whether this decoder has booted before
 #define FLASH_FIRST_BOOT 0xDEADBEEF
 
+#ifndef DECODER_ID
+#define DECODER_ID 0
+#endif
+
 
 /**********************************************************
  ********************* STATE MACROS ***********************
@@ -74,17 +78,19 @@ typedef struct {
 } frame_packet_t; //76
 
 typedef struct {
+    channel_id_t channel; //4
+    timestamp_t timestamp; //8
     uint8_t encrypted_frame[sizeof(frame_packet_t)];
     uint8_t mac[MAC_SIZE]; //16
     uint8_t nonce[NONCE_SIZE]; //24
 } encrypted_frame_packet_t; //116
 
-typedef struct {
+/* typedef struct {
     channel_id_t channel; //4
     timestamp_t timestamp; //8
     uint8_t signed_frame[sizeof(encrypted_frame_packet_t)]; //116
     uint8_t signature[SIGNATURE_SIZE]; //64
-} signed_frame_packet_t; //192
+} signed_frame_packet_t; //192 */
 
 typedef struct {
     decoder_id_t decoder_id;        //4
@@ -132,6 +138,7 @@ typedef struct {
 
 typedef struct {
     uint32_t first_boot; // if set to FLASH_FIRST_BOOT, device has booted before.
+    uint32_t decoder_id;
     channel_status_t subscribed_channels[MAX_CHANNEL_COUNT];
 } flash_entry_t;
 
@@ -294,6 +301,12 @@ int update_subscription(pkt_len_t pkt_len, signed_subscription_update_packet_t *
         return -1;
     }
 
+    if (dec_update.decoder_id != DECODER_ID) {
+        STATUS_LED_RED();
+        print_error("Failed to update subscription - decoder ID does not match\n");
+        return -1;
+    }
+
     // Find the first empty slot in the subscription array
     for (i = 0; i < MAX_CHANNEL_COUNT; i++) {
         if (decoder_status.subscribed_channels[i].id == dec_update.channel || !decoder_status.subscribed_channels[i].active) {
@@ -327,7 +340,7 @@ int update_subscription(pkt_len_t pkt_len, signed_subscription_update_packet_t *
  *
  *  @return 0 if successful.  -1 if data is from unsubscribed channel.
 */
-int decode(pkt_len_t pkt_len, signed_frame_packet_t *new_frame) {
+int decode(pkt_len_t pkt_len, encrypted_frame_packet_t *new_frame) {
     char output_buf[128] = {0};
     //uint16_t frame_size;
     channel_id_t channel;
@@ -350,7 +363,6 @@ int decode(pkt_len_t pkt_len, signed_frame_packet_t *new_frame) {
             return -1;
         }
         frame_packet_t* frame;
-        encrypted_frame_packet_t *enc_frame;
 /*         if (crypto_eddsa_check(
             new_frame->signature, 
             verification_key, 
@@ -363,19 +375,19 @@ int decode(pkt_len_t pkt_len, signed_frame_packet_t *new_frame) {
         } else {
             enc_frame = (encrypted_frame_packet_t*)(new_frame->signed_frame);
         }  */
-        enc_frame = (encrypted_frame_packet_t*)(new_frame->signed_frame);
+
         if (channel_key == NULL) {
             STATUS_LED_RED();
             print_error("Failed to decode frame - channel key not found\n");
             return -1;
         }
         if (crypto_aead_unlock(
-            enc_frame->encrypted_frame, 
-            enc_frame->mac,
+            new_frame->encrypted_frame, 
+            new_frame->mac,
             channel_key, 
-            enc_frame->nonce,
+            new_frame->nonce,
             NULL, 0,
-            enc_frame->encrypted_frame, 
+            new_frame->encrypted_frame, 
             sizeof(frame_packet_t))) {
             /* The message is corrupted.
             * Wipe key if it is no longer needed,
@@ -390,7 +402,7 @@ int decode(pkt_len_t pkt_len, signed_frame_packet_t *new_frame) {
             /* Finally, wipe secrets if they are no longer needed */
             //crypto_wipe(plain_text, 12);
             //crypto_wipe(key, 32);
-            frame = ((frame_packet_t*)(enc_frame->encrypted_frame));
+            frame = ((frame_packet_t*)(new_frame->encrypted_frame));
         }
         if(frame->timestamp != timestamp){
             STATUS_LED_RED();
@@ -432,6 +444,7 @@ void init() {
         print_debug("First boot.  Setting flash...\n");
 
         decoder_status.first_boot = FLASH_FIRST_BOOT;
+        decoder_status.decoder_id = DECODER_ID;
 
         channel_status_t subscription[MAX_CHANNEL_COUNT];
 
@@ -500,7 +513,7 @@ int main(void) {
         // Handle decode command
         case DECODE_MSG:
             STATUS_LED_PURPLE();
-            decode(pkt_len, (signed_frame_packet_t *)uart_buf);
+            decode(pkt_len, (encrypted_frame_packet_t *)uart_buf);
             break;
 
         // Handle subscribe command
