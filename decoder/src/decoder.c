@@ -85,13 +85,6 @@ typedef struct {
     uint8_t nonce[NONCE_SIZE]; //24
 } encrypted_frame_packet_t; //116
 
-/* typedef struct {
-    channel_id_t channel; //4
-    timestamp_t timestamp; //8
-    uint8_t signed_frame[sizeof(encrypted_frame_packet_t)]; //116
-    uint8_t signature[SIGNATURE_SIZE]; //64
-} signed_frame_packet_t; //192 */
-
 typedef struct {
     decoder_id_t decoder_id;        //4
     timestamp_t start_timestamp;    //8
@@ -280,18 +273,9 @@ int update_subscription(pkt_len_t pkt_len, signed_subscription_update_packet_t *
         NULL, 0, //additional(non encrypted) data, and size
         enc_update->encrypted_subscription_update, //cyphertext
         sizeof(subscription_update_packet_t))) {
-        /* The message is corrupted.
-        * Wipe key if it is no longer needed,
-        * and abort the decryption.
-        */
         STATUS_LED_RED();
         print_error("Failed to update subscription - decryption failed\n");
         return -1;
-        //crypto_wipe(key, 32);
-    } else {
-        /* ...do something with the decrypted text here... */
-        /* Finally, wipe secrets if they are no longer needed */
-        //crypto_wipe(plain_text, 12);
         //crypto_wipe(key, 32);
     }
 
@@ -344,12 +328,8 @@ int decode(pkt_len_t pkt_len, encrypted_frame_packet_t *new_frame) {
     char output_buf[128] = {0};
     //uint16_t frame_size;
     channel_id_t channel;
-
-    // Frame size is the size of the packet minus the size of non-frame elements
-    //frame_size = pkt_len - (sizeof(new_frame->channel) + sizeof(new_frame->timestamp));
     channel = new_frame->channel;
 
-    // The reference design doesn't use the timestamp, but you may want to in your design
     timestamp_t timestamp = new_frame->timestamp;
     const uint8_t* channel_key = NULL;
     // Check that we are subscribed to the channel...
@@ -363,18 +343,6 @@ int decode(pkt_len_t pkt_len, encrypted_frame_packet_t *new_frame) {
             return -1;
         }
         frame_packet_t* frame;
-/*         if (crypto_eddsa_check(
-            new_frame->signature, 
-            verification_key, 
-            new_frame->signed_frame, 
-            sizeof(encrypted_frame_packet_t)
-        )) {
-            STATUS_LED_RED();
-            print_error("Failed to decode frame - signature could not be authenticated\n");
-            return -1;
-        } else {
-            enc_frame = (encrypted_frame_packet_t*)(new_frame->signed_frame);
-        }  */
 
         if (channel_key == NULL) {
             STATUS_LED_RED();
@@ -389,19 +357,11 @@ int decode(pkt_len_t pkt_len, encrypted_frame_packet_t *new_frame) {
             NULL, 0,
             new_frame->encrypted_frame, 
             sizeof(frame_packet_t))) {
-            /* The message is corrupted.
-            * Wipe key if it is no longer needed,
-            * and abort the decryption.
-            */
             STATUS_LED_RED();
             print_error("Failed to decode frame - decryption failed\n");
             return -1;
             //crypto_wipe(key, 32);
         } else {
-            /* ...do something with the decrypted text here... */
-            /* Finally, wipe secrets if they are no longer needed */
-            //crypto_wipe(plain_text, 12);
-            //crypto_wipe(key, 32);
             frame = ((frame_packet_t*)(new_frame->encrypted_frame));
         }
         if(frame->timestamp != timestamp){
@@ -477,7 +437,7 @@ void init() {
 
 int main(void) {
     char output_buf[128] = {0};
-    uint8_t uart_buf[192]; // Does this need to be bigger, should it be dynamically allocated?
+    uint8_t uart_buf[160]; // Does this need to be bigger, should it be dynamically allocated?
     msg_type_t cmd;
     int result;
     uint16_t pkt_len;
