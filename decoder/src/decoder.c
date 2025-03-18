@@ -52,6 +52,10 @@
 // This is a canary value so we can confirm whether this decoder has booted before
 #define FLASH_FIRST_BOOT 0xDEADBEEF
 
+#ifndef DECODER_ID
+#define DECODER_ID 0
+#endif
+
 
 /**********************************************************
  ********************* STATE MACROS ***********************
@@ -68,23 +72,25 @@
 // for more information on what struct padding does, see:
 // https://www.gnu.org/software/c-intro-and-ref/manual/html_node/Structure-Layout.html
 typedef struct {
-    channel_id_t channel;
-    timestamp_t timestamp;
-    uint8_t data[FRAME_SIZE];
-} frame_packet_t;
+    channel_id_t channel; //4
+    timestamp_t timestamp; //8
+    uint8_t data[FRAME_SIZE]; //64
+} frame_packet_t; //76
 
 typedef struct {
+    channel_id_t channel; //4
+    timestamp_t timestamp; //8
     uint8_t encrypted_frame[sizeof(frame_packet_t)];
-    uint8_t mac[MAC_SIZE];
-    uint8_t nonce[NONCE_SIZE];
-} encrypted_frame_packet_t;
+    uint8_t mac[MAC_SIZE]; //16
+    uint8_t nonce[NONCE_SIZE]; //24
+} encrypted_frame_packet_t; //116
 
-typedef struct {
-    channel_id_t channel;
-    timestamp_t timestamp;
-    uint8_t signed_frame[sizeof(encrypted_frame_packet_t)];
-    uint8_t signature[SIGNATURE_SIZE];
-} signed_frame_packet_t;
+/* typedef struct {
+    channel_id_t channel; //4
+    timestamp_t timestamp; //8
+    uint8_t signed_frame[sizeof(encrypted_frame_packet_t)]; //116
+    uint8_t signature[SIGNATURE_SIZE]; //64
+} signed_frame_packet_t; //192 */
 
 typedef struct {
     decoder_id_t decoder_id;        //4
@@ -96,20 +102,19 @@ typedef struct {
 
 typedef struct {
     uint8_t encrypted_subscription_update[sizeof(subscription_update_packet_t)];
-    uint8_t mac[MAC_SIZE];
-    uint8_t nonce[NONCE_SIZE];
-} encrypted_subscription_update_packet_t;
+    uint8_t mac[MAC_SIZE]; //16
+    uint8_t nonce[NONCE_SIZE]; //24
+} encrypted_subscription_update_packet_t; //96
 
 typedef struct {
     uint8_t signed_subscription_update[sizeof(encrypted_subscription_update_packet_t)];
-    uint8_t signature[SIGNATURE_SIZE];
-} signed_subscription_update_packet_t;
+    uint8_t signature[SIGNATURE_SIZE]; //64
+} signed_subscription_update_packet_t; //160
 
 typedef struct {
     channel_id_t channel;
     timestamp_t start;
     timestamp_t end;
-    uint8_t channel_key[CHANNEL_KEY_SIZE];
 } channel_info_t;
 
 typedef struct {
@@ -133,6 +138,7 @@ typedef struct {
 
 typedef struct {
     uint32_t first_boot; // if set to FLASH_FIRST_BOOT, device has booted before.
+    uint32_t decoder_id;
     channel_status_t subscribed_channels[MAX_CHANNEL_COUNT];
 } flash_entry_t;
 
@@ -154,9 +160,10 @@ flash_entry_t decoder_status;
  *  @param channel The channel number to be checked.
  *  @return 1 if the the decoder is subscribed to the channel.  0 if not.
 */
-int is_subscribed(channel_id_t channel, timestamp_t framestamp) {
+int is_subscribed(channel_id_t channel, timestamp_t framestamp, const uint8_t **channel_key) {
     // Check if this is an emergency broadcast message
     if (channel == EMERGENCY_CHANNEL) {
+        *channel_key = emergency_channel_key;
         return 1;
     }
     // Check if the decoder has has a subscription
@@ -164,13 +171,40 @@ int is_subscribed(channel_id_t channel, timestamp_t framestamp) {
         if (decoder_status.subscribed_channels[i].id == channel && 
             decoder_status.subscribed_channels[i].active &&
             decoder_status.subscribed_channels[i].start_timestamp <= framestamp &&
-            decoder_status.subscribed_channels[i].end_timestamp   >= framestamp) {
+            decoder_status.subscribed_channels[i].end_timestamp   >= framestamp
+            ) {
+            *channel_key = decoder_status.subscribed_channels[i].channel_key;
             return 1;
         }
     }
     return 0;
 }
 
+int is_timestamp_valid(channel_id_t channel, timestamp_t timestamp) {
+    static timestamp_t last_timestamps[MAX_CHANNEL_COUNT + 1] = {0}; // +1 for emergency channel
+    
+    // Get the index for this channel in our tracking array
+    int index = (channel == EMERGENCY_CHANNEL) ? MAX_CHANNEL_COUNT : 0;
+    for (int i = 0; i < MAX_CHANNEL_COUNT; i++) {
+        if (decoder_status.subscribed_channels[i].id == channel && 
+            decoder_status.subscribed_channels[i].active) {
+            index = i;
+            break;
+        }
+    }
+    
+    // Check if timestamp is greater than the last seen timestamp for this channel
+    if (timestamp <= last_timestamps[index] && last_timestamps[index] != 0) {
+        // This could be a replay attack
+        STATUS_LED_RED();
+        print_error("Potential replay attack detected - timestamp not increasing\n");
+        return 0;
+    }
+    
+    // Update the last seen timestamp for this channel
+    last_timestamps[index] = timestamp;
+    return 1;
+}
 
 
 /**********************************************************
@@ -196,7 +230,7 @@ int list_channels() {
         }
     }
 
-    len = sizeof(resp.n_channels) + ((sizeof(channel_info_t)-SUB_KEY_SIZE) * resp.n_channels);
+    len = sizeof(resp.n_channels) + ((sizeof(channel_info_t)) * resp.n_channels);
 
     // Success message
     write_packet(LIST_MSG, &resp, len);
@@ -267,6 +301,12 @@ int update_subscription(pkt_len_t pkt_len, signed_subscription_update_packet_t *
         return -1;
     }
 
+    if (dec_update.decoder_id != DECODER_ID) {
+        STATUS_LED_RED();
+        print_error("Failed to update subscription - decoder ID does not match\n");
+        return -1;
+    }
+
     // Find the first empty slot in the subscription array
     for (i = 0; i < MAX_CHANNEL_COUNT; i++) {
         if (decoder_status.subscribed_channels[i].id == dec_update.channel || !decoder_status.subscribed_channels[i].active) {
@@ -300,7 +340,7 @@ int update_subscription(pkt_len_t pkt_len, signed_subscription_update_packet_t *
  *
  *  @return 0 if successful.  -1 if data is from unsubscribed channel.
 */
-int decode(pkt_len_t pkt_len, signed_frame_packet_t *new_frame) {
+int decode(pkt_len_t pkt_len, encrypted_frame_packet_t *new_frame) {
     char output_buf[128] = {0};
     //uint16_t frame_size;
     channel_id_t channel;
@@ -311,52 +351,43 @@ int decode(pkt_len_t pkt_len, signed_frame_packet_t *new_frame) {
 
     // The reference design doesn't use the timestamp, but you may want to in your design
     timestamp_t timestamp = new_frame->timestamp;
-
+    const uint8_t* channel_key = NULL;
     // Check that we are subscribed to the channel...
     print_debug("Checking subscription\n");
-    if (is_subscribed(channel,timestamp)) {
+    if ( is_subscribed(channel,timestamp, &channel_key)) {
         print_debug("Subscription Valid\n");
 
-        frame_packet_t frame;
-        encrypted_frame_packet_t *enc_frame;
-        if (crypto_eddsa_check(
+        if (!is_timestamp_valid(channel, timestamp)) {
+            STATUS_LED_RED();
+            print_error("Failed to decode frame - invalid timestamp sequence\n");
+            return -1;
+        }
+        frame_packet_t* frame;
+/*         if (crypto_eddsa_check(
             new_frame->signature, 
             verification_key, 
             new_frame->signed_frame, 
             sizeof(encrypted_frame_packet_t)
         )) {
-            /* Message is corrupted, do not trust it */
             STATUS_LED_RED();
             print_error("Failed to decode frame - signature could not be authenticated\n");
             return -1;
         } else {
-            /* Message is genuine */
             enc_frame = (encrypted_frame_packet_t*)(new_frame->signed_frame);
-        }
-        const uint8_t* channel_key = NULL;
-        if (channel == EMERGENCY_CHANNEL) {
-            channel_key = emergency_channel_key;
-        } else {
-            for (int i = 0; i < MAX_CHANNEL_COUNT; i++) {
-                if (decoder_status.subscribed_channels[i].id == channel && 
-                    decoder_status.subscribed_channels[i].active) {
-                    channel_key = decoder_status.subscribed_channels[i].channel_key;
-                    break;
-                }
-            }
-        }
+        }  */
+
         if (channel_key == NULL) {
             STATUS_LED_RED();
             print_error("Failed to decode frame - channel key not found\n");
             return -1;
         }
         if (crypto_aead_unlock(
-            (uint8_t*)&frame, 
-            enc_frame->mac,
+            new_frame->encrypted_frame, 
+            new_frame->mac,
             channel_key, 
-            enc_frame->nonce,
+            new_frame->nonce,
             NULL, 0,
-            enc_frame->encrypted_frame, 
+            new_frame->encrypted_frame, 
             sizeof(frame_packet_t))) {
             /* The message is corrupted.
             * Wipe key if it is no longer needed,
@@ -371,18 +402,19 @@ int decode(pkt_len_t pkt_len, signed_frame_packet_t *new_frame) {
             /* Finally, wipe secrets if they are no longer needed */
             //crypto_wipe(plain_text, 12);
             //crypto_wipe(key, 32);
+            frame = ((frame_packet_t*)(new_frame->encrypted_frame));
         }
-        if(frame.timestamp != timestamp){
+        if(frame->timestamp != timestamp){
             STATUS_LED_RED();
             print_error("Encrypted Timestamp does not match plaintext Timestamp\n");
             return -1;
         }
-        if(frame.channel != channel){
+        if(frame->channel != channel){
             STATUS_LED_RED();
             print_error("Encrypted channel number does not match plaintext channel\n");
             return -1;
         }
-        write_packet(DECODE_MSG, frame.data, FRAME_SIZE);
+        write_packet(DECODE_MSG, frame->data, FRAME_SIZE);
         return 0;
     } else {
         STATUS_LED_RED();
@@ -412,6 +444,7 @@ void init() {
         print_debug("First boot.  Setting flash...\n");
 
         decoder_status.first_boot = FLASH_FIRST_BOOT;
+        decoder_status.decoder_id = DECODER_ID;
 
         channel_status_t subscription[MAX_CHANNEL_COUNT];
 
@@ -444,7 +477,7 @@ void init() {
 
 int main(void) {
     char output_buf[128] = {0};
-    uint8_t *uart_buf = NULL; // Does this need to be bigger, should it be dynamically allocated?
+    uint8_t uart_buf[192]; // Does this need to be bigger, should it be dynamically allocated?
     msg_type_t cmd;
     int result;
     uint16_t pkt_len;
@@ -460,7 +493,7 @@ int main(void) {
 
         STATUS_LED_GREEN();
 
-        result = read_packet(&cmd, (void**)&uart_buf, &pkt_len);
+        result = read_packet(&cmd, uart_buf, &pkt_len);
 
         if (result < 0) {
             STATUS_LED_ERROR();
@@ -480,7 +513,7 @@ int main(void) {
         // Handle decode command
         case DECODE_MSG:
             STATUS_LED_PURPLE();
-            decode(pkt_len, (signed_frame_packet_t *)uart_buf);
+            decode(pkt_len, (encrypted_frame_packet_t *)uart_buf);
             break;
 
         // Handle subscribe command
