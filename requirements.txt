@@ -1,2 +1,0 @@
-msgpack==1.1.0
-pymonocypher==4.0.2.5
